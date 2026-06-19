@@ -1,0 +1,51 @@
+.tableScroll {
+  position: relative;
+  width: 100%;
+  overflow: auto;
+}
+
+.table {
+  width: 100%;
+  caption-side: bottom;
+  font-size: 0.875rem;
+}
+
+.header {
+  tr {
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+.body {
+  tr:last-child {
+    border-bottom: 0;
+  }
+}
+
+.row {
+  border-bottom: 1px solid var(--border);
+  transition: background-color 150ms ease, color 150ms ease;
+
+  &:hover {
+    background: color-mix(in oklch, var(--muted), transparent 50%);
+  }
+
+  &[data-state="selected"] {
+    background: var(--muted);
+  }
+}
+
+.head {
+  height: 2.5rem;
+  padding: 0 0.75rem;
+  text-align: left;
+  vertical-align: middle;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--muted-foreground);
+}
+
+.cell {
+  padding: 0.75rem;
+  vertical-align: middle;
+}

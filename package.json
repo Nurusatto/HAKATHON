@@ -1,0 +1,28 @@
+{
+  "name": "hakathon",
+  "version": "1.0.0",
+  "description": "во время dev:\r .env  - в корень проекта",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "frontend": "cd frontend && npm run dev",
+    "backend": "cd backend && uvicorn src.main:app --reload",
+    "dev": "concurrently --names \"FRONTEND,BACKEND\" -c \"bgBlue.bold,bgGreen.bold\" \"npm run frontend\" \"npm run backend\"",
+    "mock": "cd backend && python generator.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nurusatto/HAKATHON.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Nurusatto/HAKATHON/issues"
+  },
+  "homepage": "https://github.com/Nurusatto/HAKATHON#readme",
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}

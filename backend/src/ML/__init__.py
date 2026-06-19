@@ -1,0 +1,1 @@
+from .train_ml import train_ai_model_from_db as train_ai_model_from_db
