@@ -1,7 +1,7 @@
+import { ClientProvider } from "@/app/_providers/clientProvider";
+import { cn } from "@/lib/utils";
 import type { Metadata } from "next";
 import "./globals.css";
-import { cn } from "@/lib/utils";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const metadata: Metadata = {
   title: "Log Sentinel Dashboard",
@@ -16,7 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={cn("h-full", "antialiased", "font-sans")}>
       <body className="min-h-full flex flex-col">
-        <TooltipProvider>{children}</TooltipProvider>
+        <ClientProvider>{children}</ClientProvider>
       </body>
     </html>
   );

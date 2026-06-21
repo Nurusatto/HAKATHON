@@ -13,6 +13,7 @@ from src.lib import (
 )
 from src.schemas import LogInput
 from .ML import train_ai_model_from_db
+import redis.asyncio as aioredis
 
 load_dotenv()
 
@@ -21,22 +22,36 @@ ai_detector = None
 cached_security_rules = {}
 cached_banned_ips = set()
 blacklist_reasons = {}
+redis_client: aioredis.Redis = None  # type: ignore
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global ai_detector, cached_security_rules, cached_banned_ips, blacklist_reasons
+    global \
+        ai_detector, \
+        cached_security_rules, \
+        cached_banned_ips, \
+        blacklist_reasons, \
+        redis_client
+
+    redis_client = aioredis.from_url("redis://redis:6379", decode_responses=True)
 
     ai_detector = train_ai_model_from_db()
     cached_security_rules = load_security_rules_from_db()
     cached_banned_ips, blacklist_reasons = load_blacklist_from_db()
     yield
+    await redis_client.close()
 
 
 app = FastAPI(title="AI Shield SIEM Engine", lifespan=lifespan)
 
 
-@app.post("/fake-log")
+@app.get("/")
+def hello():
+    return {"message": "AI SHIELD"}
+
+
+@app.post("/protect-log")
 async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
     if ai_detector is None:
         raise HTTPException(status_code=503, detail="AI Detector unavailable")
@@ -44,16 +59,23 @@ async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
     base_risk = 10
     explanations = {}
 
+    # --- ЭШЕЛОН 1: Перманентный черный список (Supabase) ---
     if log.ip in cached_banned_ips:
         reason = blacklist_reasons.get(log.ip, "Внесен в черный список администратором")
-        ip_rule = cached_security_rules.get(
-            "suspicious_ip", {"weight": 60, "desc": "Запрос со скомпрометированного IP"}
+        raise HTTPException(
+            status_code=403,
+            detail=f"Доступ запрещен. Ваш IP находится в постоянном черном списке. Причина: {reason}",
         )
 
-        base_risk += ip_rule["weight"]  # type: ignore
+    # --- ЭШЕЛОН 2: Временный автобан (Redis) ---
+    is_temporary_banned = await redis_client.get(f"ban:{log.ip}")
+    if is_temporary_banned:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too Many Requests. Вы временно заблокированы. Причина: {is_temporary_banned}",
+        )
 
-        explanations["blacklist"] = f"{ip_rule['desc']} ({log.ip}). Причина: {reason}."
-
+    # --- ЭШЕЛОН 3: СТАТИЧЕСКИЕ ПРАВИЛА И ПЕНАЛЬТИ ---
     if log.event in cached_security_rules and log.event != "suspicious_ip":
         rule = cached_security_rules[log.event]
         base_risk += rule["weight"]  # type: ignore
@@ -67,6 +89,22 @@ async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
                 f"неудачных попыток авторизации за минуту от IP {log.ip}."
             )
 
+    # --- ЭШЕЛОН 4: DLP МОНИТОРИНГ (ДЕТЕКЦИЯ УТЕЧЕК) ---
+    if log.event == "file_download" and log.download_size_mb > 1000:
+        if log.user in ["admin", "hr_manager"]:
+            base_risk += 20
+            explanations["dlp_leak_detection"] = (
+                f"[DLP Предупреждение]: Привилегированный пользователь {log.user} "
+                f"скачивает крупный объем данных ({log.download_size_mb} МБ). Превышение лимита, требуется аудит."
+            )
+        else:
+            base_risk += 70  # Гарантированный порог 80+ для улета в автобан
+            explanations["dlp_leak_detection"] = (
+                f"[DLP Критический инцидент]: Неавторизованный или рядовой сегмент ({log.user}) "
+                f"пытается выгрузить {log.download_size_mb} МБ. Доступ заблокирован для предотвращения утечки данных (Data Leakage)."
+            )
+
+    # --- ЭШЕЛОН 5: ПОВЕДЕНЧЕСКИЙ АНАЛИЗ (ИИ / ISOLATION FOREST) ---
     EVENT_MAPPING = {
         "login_success": 1,
         "login_failed": 2,
@@ -74,15 +112,14 @@ async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
         "admin_access": 4,
         "password_reset": 5,
     }
-
     event_encoded = EVENT_MAPPING.get(log.event, 0)
     current_hour = datetime.now().hour
 
-    # Скармливаем ИИ суммарное количество запросов и объема данных вместо единичного лога
     features = np.array(
         [[log.request_count_1m, log.download_size_mb, event_encoded, current_hour]]
     )
     ai_prediction = ai_detector.predict(features)
+    print(f"[AI Engine] Prediction for IP {log.ip}: {ai_prediction}")
 
     if ai_prediction[0] == -1:
         base_risk += 40
@@ -100,6 +137,7 @@ async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
             "Поведение пользователя полностью укладывается в рамки нормы."
         )
 
+    # --- АСИНХРОННАЯ ЗАПИСЬ И ОПОВЕЩЕНИЯ ---
     background_tasks.add_task(save_to_raw_logs, log)
 
     if final_risk >= 50:
@@ -107,7 +145,22 @@ async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
             save_to_security_alerts,
             log,
             final_risk,  # type: ignore
-            explanations,  # Передаем словарь целиком! # type: ignore
+            explanations,  # type: ignore
+        )
+
+    # --- АВТОМАТИЧЕСКИЙ РЕАКТИВНЫЙ БАН (REDIS) ---
+    if final_risk >= 80:
+        # Динамически вытаскиваем причину для Redis, приоритет отдаем DLP или Брутфорсу
+        if "dlp_leak_detection" in explanations:
+            reason_text = "DLP: Попытка несанкционированной утечки данных"
+        elif "brute_force_detection" in explanations:
+            reason_text = "Brute-Force: Превышено число попыток входа"
+        else:
+            reason_text = "Критический уровень риска (API Abuse/Аномалии)"
+
+        await redis_client.set(f"ban:{log.ip}", reason_text, ex=60)
+        print(
+            f"[Redis IPS] IP {log.ip} временно заблокирован на 60 секунд за риск {final_risk}%!"
         )
 
     return {"status": "ok", "risk": final_risk, "explanation": explanations}
@@ -130,7 +183,7 @@ async def retrain_model():
 if __name__ == "__main__":
     import uvicorn
 
-    env_port = os.getenv("PORT")
+    env_port = os.getenv("API_PORT")
     if not env_port:
         raise RuntimeError("\n[ERROR] variable 'PORT' not set in .env!\n")
 

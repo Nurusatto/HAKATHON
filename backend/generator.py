@@ -2,7 +2,10 @@ import random
 import requests
 import time
 
-URL = "http://localhost:8000/fake-log"
+URL = "http://localhost:8000/protect-log"
+# URL = "http://backend:8000/protect-log"
+
+logs = 100
 
 events = [
     "login_success",
@@ -25,7 +28,7 @@ BANNED_IP = [
 
 print("Запуск генератора логов...")
 
-for i in range(50):
+for i in range(logs):
     # Примерно каждый 5-й лог будет аномальным
     is_attack = random.choice([True, False, False, False, False])
 
@@ -72,4 +75,4 @@ for i in range(50):
 
     time.sleep(0.6)
 
-print("Готово. Отправлено 50 логов.")
+print(f"Готово. Отправлено {logs} логов.")

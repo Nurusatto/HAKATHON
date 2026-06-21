@@ -1,3 +1,4 @@
+import * as React from "react";
 import {
   Card,
   CardContent,
@@ -6,26 +7,46 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
-type CardProps = {
-  header: string;
-  description: string;
-  content: string | number;
-};
+interface CardSmallProps extends Omit<
+  React.ComponentProps<typeof Card>,
+  "content"
+> {
+  title: string;
+  description?: string | React.ReactNode;
+  content: React.ReactNode;
+  footer?: React.ReactNode;
+  variant?: "classic" | "minimal";
+}
 
-type prop = {
-  obj: CardProps;
-};
-
-export const CardSmall = ({ obj }: prop) => {
+export const CardSmall = ({
+  title,
+  description,
+  content,
+  footer,
+  variant = "classic",
+  className,
+  ...props
+}: CardSmallProps) => {
   return (
-    <Card size="sm" className="mx-auto w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>{obj.header}</CardTitle>
-        <CardDescription>{obj.description}</CardDescription>
+    <Card className={cn("w-full max-w-sm", className)} {...props}>
+      <CardHeader className={variant === "minimal" ? "pb-2" : undefined}>
+        <CardTitle className="text-base font-semibold">{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
-      <CardContent>{obj.content}</CardContent>
-      <CardFooter></CardFooter>
+
+      <CardContent
+        className={cn("text-2xl font-bold", variant === "minimal" && "pt-0")}
+      >
+        {content}
+      </CardContent>
+
+      {footer && variant === "classic" && (
+        <CardFooter className="text-xs text-muted-foreground">
+          {footer}
+        </CardFooter>
+      )}
     </Card>
   );
 };

@@ -40,6 +40,8 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "numpy" },
     { name = "python-dotenv" },
+    { name = "redis" },
+    { name = "redis-cli" },
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "supabase" },
@@ -50,6 +52,8 @@ requires-dist = [
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.3" },
     { name = "numpy", specifier = ">=2.4.6" },
     { name = "python-dotenv", specifier = ">=1.2.2" },
+    { name = "redis", specifier = ">=8.0.0" },
+    { name = "redis-cli", specifier = ">=1.0.1" },
     { name = "requests", specifier = ">=2.34.2" },
     { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "supabase", specifier = ">=2.31.0" },
@@ -863,6 +867,27 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/df/34/54a1eaaefa24db5cb12596fd74792e08efa53ed30dc5bce2c0a68ded6146/realtime-2.31.0.tar.gz", hash = "sha256:9e641cb4d77ca0fe768515f8cf9f83550c79f49ce1550a95afc2dc0e252be8c9", size = 18716, upload-time = "2026-06-04T13:37:22.089Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/60/164246615e8b059f6d53d34648a0784260421ec98a07eb1e45160f063221/realtime-2.31.0-py3-none-any.whl", hash = "sha256:f6e494b53d6a6e80b6efcee6711c8dd40413a52e766271de1bce8ced6c36cc1d", size = 22374, upload-time = "2026-06-04T13:37:21.162Z" },
+]
+
+[[package]]
+name = "redis"
+version = "8.0.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/ae/ed461cca5780b5fc8b9fe8ca0ed98d89508645fb9d880c24cc42c087678f/redis-8.0.0.tar.gz", hash = "sha256:a00c5355432051ac14e593b8b197fc76c887ee12d55a0984f69328a1115fdc49", size = 5101591, upload-time = "2026-05-28T12:45:13.5Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/27/e3/b519734372d305bd547534a9f32e4ce9f98552af753dce72cf3483a0ff0b/redis-8.0.0-py3-none-any.whl", hash = "sha256:c938c18338585009f0bc310f4c7e4e4b4d37639356c4ac072cedf3af570c8dc7", size = 499870, upload-time = "2026-05-28T12:45:11.697Z" },
+]
+
+[[package]]
+name = "redis-cli"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "redis" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/85/7a/464077bce2a14cd8399776ae0c694e7c240b58ffe4b231413013f2fb48fe/redis-cli-1.0.1.tar.gz", hash = "sha256:6be46d8e6ae638fec27cb425d499b7f25b1592402c74d5d17f5b85b5e7f988a0", size = 5958, upload-time = "2023-10-02T05:58:36.407Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7b/29/33cbdafefd22613cc003f837b6f0295462b2e91696180f06c5210f576a1b/redis_cli-1.0.1-py3-none-any.whl", hash = "sha256:e9f6af4a8b7591d8bfd1e23be89bdd9666ce824df881748fb02b88dd30575dc8", size = 5851, upload-time = "2023-10-02T05:58:32.924Z" },
 ]
 
 [[package]]

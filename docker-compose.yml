@@ -1,0 +1,37 @@
+services:
+  backend:
+    build:
+      context: ./backend # Путь к папке бэкенда, где лежит Dockerfile
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000" # Пробрасываем порт наружу (localhost:8000)
+    volumes:
+      - ./backend:/app # Связываем папку бэкенда на ПК с папкой /app в контейнере
+    env_file:
+      - .env # Подтягиваем файл .env из корня проекта
+  redis:
+    image: redis:7-alpine # Легковесный официальный образ Redis
+    container_name: ai-shield-redis
+    ports:
+      - "6379:6379" # Пробрасываем порт наружу, чтобы ты мог заглянуть через redis-cli
+    restart: always
+
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   container_name: ai-shield-frontend
+  #   ports:
+  #     - "3000:3000"
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+  #     # СЛЕДУЮЩАЯ СТРОКА ВКЛЮЧАЕТ WATCH-РЕЖИМ ДЛЯ WATCHPACK/TURBOPACK В DOCKER:
+  #     - WATCHPACK_POLLING=true
+  #   depends_on:
+  #     - backend
+  #   restart: always

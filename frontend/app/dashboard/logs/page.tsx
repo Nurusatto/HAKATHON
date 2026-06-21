@@ -1,57 +1,96 @@
 "use client";
+
+import { useEffect } from "react";
+import { CardPanel } from "./CardPanel/cardPanel";
 import { createClient } from "@/lib/supabase/client";
-import { useEffect, useState } from "react";
-import { CardPanel } from "./cardPanel";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { RealtimePostgresUpdatePayload } from "@supabase/supabase-js";
+import LogList from "./logList/logList";
+
+type DatabaseStatsRow = {
+  id: string;
+  count: number;
+  header: string | null;
+  description: string;
+};
+
+type CardItem = {
+  id: string;
+  header: string;
+  count: number;
+  description: string;
+};
 
 export default function LogsPage() {
-  // const supabase = createClient();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // const [logs, setLogs] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const supabase = createClient();
+  const queryClient = useQueryClient();
 
-  const data = {
-    raw: [{ header: "hello" }, { description: "hello" }],
-    alert: [{ header: "security" }, { description: "security" }],
-    block: [{ header: "block" }, { description: "block" }],
-    isActiveRule: [{ header: "rule" }, { description: "rule" }],
-    patternProfiles: [{ header: "profiles" }, { description: "profiles" }],
+  const fetchDashboardStats = async (): Promise<CardItem[]> => {
+    const { data, error } = await supabase
+      .from<"dashboard_stats", DatabaseStatsRow>("dashboard_stats")
+      .select("*");
+
+    if (error) throw new Error(error.message);
+
+    return (data || []).map((item) => ({
+      id: item.id,
+      header:
+        item.header ||
+        (item.id === "total_logs" ? "Системные Логи" : "Критические Алерты"),
+      count: item.count,
+      description: item.description,
+    }));
   };
 
-  // useEffect(() => {
-  //   supabase
-  //     .from("raw_logs")
-  //     .select("*")
-  //     .then(({ data, error }) => {
-  //       if (error) {
-  //         console.error("Ошибка при получении логов:", error);
-  //       } else {
-  //         setLogs(data || []);
-  //       }
-  //       setIsLoading(false);
-  //     });
+  const {
+    data: stats,
+    isLoading,
+    isError,
+    error,
+  } = useQuery<CardItem[], Error>({
+    queryKey: ["dashboardStats"],
+    queryFn: fetchDashboardStats,
+  });
 
-  //   const channel = supabase
-  //     .channel("schema-db-changes")
-  //     .on(
-  //       "postgres_changes",
-  //       { event: "INSERT", schema: "public", table: "raw_logs" },
-  //       (payload) => {
-  //         setLogs((prev) => [payload.new, ...prev]);
-  //       },
-  //     )
-  //     .subscribe();
+  useEffect(() => {
+    const statsChannel = supabase
+      .channel("realtime-stats")
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "dashboard_stats" },
+        (payload: RealtimePostgresUpdatePayload<DatabaseStatsRow>) => {
+          const updatedRow = payload.new;
 
-  //   return () => {
-  //     supabase.removeChannel(channel);
-  //   };
-  //   // eslint-disable-next-line react-hooks/exhaustive-deps
-  // }, []);
+          queryClient.setQueryData<CardItem[]>(
+            ["dashboardStats"],
+            (oldData) => {
+              if (!oldData) return oldData;
+
+              return oldData.map((item) =>
+                item.id === updatedRow.id
+                  ? { ...item, count: updatedRow.count }
+                  : item,
+              );
+            },
+          );
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(statsChannel);
+    };
+  }, [queryClient, supabase]);
 
   return (
-    <div className="">
-      <section>
-        <CardPanel data={data} isLoading={isLoading} />
-      </section>
-    </div>
+    <section className="flex gap-3.5 flex-col">
+      <CardPanel
+        data={stats || []}
+        isLoading={isLoading}
+        error={error}
+        isError={isError}
+      />
+      <LogList />
+    </section>
   );
 }
