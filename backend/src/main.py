@@ -1,9 +1,10 @@
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 import numpy as np
+
 
 from src.lib import (
     load_blacklist_from_db,
@@ -14,15 +15,30 @@ from src.lib import (
 from src.schemas import LogInput
 from .ML import train_ai_model_from_db
 import redis.asyncio as aioredis
+from src.lib.supabase import supabase  # Клиент supabase
 
 load_dotenv()
-
 
 ai_detector = None
 cached_security_rules = {}
 cached_banned_ips = set()
 blacklist_reasons = {}
+cached_user_profiles = {}  # Кэш для профилей пользователей
 redis_client: aioredis.Redis = None  # type: ignore
+
+
+def load_user_profiles_from_db():
+    """Загрузка профилей пользователей из Supabase для кэширования"""
+    try:
+        response = supabase.table("user_profiles").select("*").execute()
+        profiles = {row["username"]: row for row in response.data}  # type: ignore
+        print(
+            f"[Cache System] Успешно загружено профилей пользователей: {len(profiles)}"
+        )
+        return profiles
+    except Exception as e:
+        print(f"[DB Error] Ошибка загрузки профилей пользователей: {e}")
+        return {}
 
 
 @asynccontextmanager
@@ -32,6 +48,7 @@ async def lifespan(app: FastAPI):
         cached_security_rules, \
         cached_banned_ips, \
         blacklist_reasons, \
+        cached_user_profiles, \
         redis_client
 
     redis_client = aioredis.from_url("redis://redis:6379", decode_responses=True)
@@ -39,6 +56,7 @@ async def lifespan(app: FastAPI):
     ai_detector = train_ai_model_from_db()
     cached_security_rules = load_security_rules_from_db()
     cached_banned_ips, blacklist_reasons = load_blacklist_from_db()
+    cached_user_profiles = load_user_profiles_from_db()
     yield
     await redis_client.close()
 
@@ -52,109 +70,156 @@ def hello():
 
 
 @app.post("/protect-log")
-async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
-    if ai_detector is None:
-        raise HTTPException(status_code=503, detail="AI Detector unavailable")
+async def process_log(log: LogInput, background_tasks: BackgroundTasks):
+    global \
+        ai_detector, \
+        cached_security_rules, \
+        cached_banned_ips, \
+        blacklist_reasons, \
+        cached_user_profiles
 
-    base_risk = 10
-    explanations = {}
-
-    # --- ЭШЕЛОН 1: Перманентный черный список (Supabase) ---
-    if log.ip in cached_banned_ips:
-        reason = blacklist_reasons.get(log.ip, "Внесен в черный список администратором")
+    is_banned = await redis_client.get(f"ban:{log.ip}")
+    if is_banned:
         raise HTTPException(
             status_code=403,
-            detail=f"Доступ запрещен. Ваш IP находится в постоянном черном списке. Причина: {reason}",
+            detail=f"Access Denied. Your IP {log.ip} is temporarily blocked by AI Shield IPS. Reason: {is_banned}",
         )
 
-    # --- ЭШЕЛОН 2: Временный автобан (Redis) ---
-    is_temporary_banned = await redis_client.get(f"ban:{log.ip}")
-    if is_temporary_banned:
-        raise HTTPException(
-            status_code=429,
-            detail=f"Too Many Requests. Вы временно заблокированы. Причина: {is_temporary_banned}",
-        )
+    background_tasks.add_task(save_to_raw_logs, log)
 
-    # --- ЭШЕЛОН 3: СТАТИЧЕСКИЕ ПРАВИЛА И ПЕНАЛЬТИ ---
-    if log.event in cached_security_rules and log.event != "suspicious_ip":
-        rule = cached_security_rules[log.event]
-        base_risk += rule["weight"]  # type: ignore
-        explanations["static_rules"] = f"[База Правил]: {rule['desc']}"
-
-        if log.event == "login_failed" and log.request_count_1m > 3:
-            brute_force_penalty = min((log.request_count_1m - 3) * 5, 50)
-            base_risk += brute_force_penalty
-            explanations["brute_force_detection"] = (
-                f"Обнаружены признаки брутфорса. Зафиксировано {log.request_count_1m} "
-                f"неудачных попыток авторизации за минуту от IP {log.ip}."
-            )
-
-    # --- ЭШЕЛОН 4: DLP МОНИТОРИНГ (ДЕТЕКЦИЯ УТЕЧЕК) ---
-    if log.event == "file_download" and log.download_size_mb > 1000:
-        if log.user in ["admin", "hr_manager"]:
-            base_risk += 20
-            explanations["dlp_leak_detection"] = (
-                f"[DLP Предупреждение]: Привилегированный пользователь {log.user} "
-                f"скачивает крупный объем данных ({log.download_size_mb} МБ). Превышение лимита, требуется аудит."
-            )
-        else:
-            base_risk += 70  # Гарантированный порог 80+ для улета в автобан
-            explanations["dlp_leak_detection"] = (
-                f"[DLP Критический инцидент]: Неавторизованный или рядовой сегмент ({log.user}) "
-                f"пытается выгрузить {log.download_size_mb} МБ. Доступ заблокирован для предотвращения утечки данных (Data Leakage)."
-            )
-
-    # --- ЭШЕЛОН 5: ПОВЕДЕНЧЕСКИЙ АНАЛИЗ (ИИ / ISOLATION FOREST) ---
-    EVENT_MAPPING = {
-        "login_success": 1,
-        "login_failed": 2,
-        "file_download": 3,
-        "admin_access": 4,
-        "password_reset": 5,
+    event_mapping = {
+        "normal_request": 0,
+        "login_failed": 1,
+        "password_reset": 2,
+        "suspicious_ip": 3,
+        "data_export": 4,
+        "file_download": 5,
+        "admin_access": 6,
+        "login_success": 7,
     }
-    event_encoded = EVENT_MAPPING.get(log.event, 0)
-    current_hour = datetime.now().hour
+    event_code = event_mapping.get(log.event, 0)
+    current_hour = datetime.now(timezone.utc).hour
 
+    # Входной вектор для 4D Isolation Forest
     features = np.array(
-        [[log.request_count_1m, log.download_size_mb, event_encoded, current_hour]]
+        [[log.request_count_1m, log.download_size_mb, event_code, current_hour]]
     )
-    ai_prediction = ai_detector.predict(features)
-    print(f"[AI Engine] Prediction for IP {log.ip}: {ai_prediction}")
 
-    if ai_prediction[0] == -1:
-        base_risk += 40
+    ai_score = 0
+    if ai_detector is not None:
+        try:
+            anomaly_score = ai_detector.score_samples(features)[0]
+            if anomaly_score < -0.4:
+                ai_score = int((abs(anomaly_score) - 0.4) * 250)
+        except Exception as e:
+            print(f"[AI Predict Error] Ошибка инференса модели: {e}")
+
+    base_risk = max(0, min(100, ai_score))
+
+    final_risk = base_risk
+    explanations = {}
+
+    if ai_score > 40:
         explanations["ai_analytics"] = (
             f"Зафиксирована потенциальная атака (API Abuse / Аномальный трафик). "
             f"Интенсивность от IP {log.ip} составила {log.request_count_1m} запр/мин, "
-            f"а общий объем переданных данных: {log.download_size_mb:.2f} МБ, "
-            f"что нетипично для времени суток {current_hour}:00."
+            f"а общий объем переданных данных: {log.download_size_mb} МБ, что нетипично для времени суток {current_hour}:00."
         )
 
-    final_risk = min(base_risk, 100)
-
-    if not explanations:
-        explanations["status"] = (
-            "Поведение пользователя полностью укладывается в рамки нормы."
+    if log.ip in cached_banned_ips:
+        final_risk = 100
+        explanations["blacklist"] = (
+            f"Зафиксирован запрос с заблокированного IP. "
+            f"Причина бана: {blacklist_reasons.get(log.ip, 'подозрительная активность')}"
         )
 
-    # --- АСИНХРОННАЯ ЗАПИСЬ И ОПОВЕЩЕНИЯ ---
-    background_tasks.add_task(save_to_raw_logs, log)
+    rules_to_check = (
+        cached_security_rules.values()
+        if isinstance(cached_security_rules, dict)
+        else cached_security_rules
+    )
+
+    if rules_to_check:
+        for rule in rules_to_check:
+            if isinstance(rule, dict) and rule.get("event_type") == log.event:
+                explanations["static_rules"] = (
+                    f"[База Правил]: {rule.get('description', '')}"
+                )
+                raw_severity = rule.get("severity_score")
+                if isinstance(raw_severity, (int, float)) or isinstance(
+                    raw_severity, str
+                ):
+                    severity = int(raw_severity)
+                else:
+                    severity = 0
+
+                final_risk = max(final_risk, severity)
+
+    # Проверка поведенческих профилей пользователей
+    user_profile = cached_user_profiles.get(log.user)
+
+    if not user_profile:
+        user_profile = {
+            "username": log.user,
+            "max_requests_1m": 20,
+            "max_download_mb": 50.0,
+        }
+
+    if user_profile and isinstance(user_profile, dict):
+        raw_download = user_profile.get("max_download_mb")
+        raw_requests = user_profile.get("max_requests_1m")
+
+        max_download = (
+            float(raw_download)
+            if isinstance(raw_download, (int, float, str))
+            else 99999.0
+        )
+        max_requests = (
+            int(raw_requests) if isinstance(raw_requests, (int, float, str)) else 99999
+        )
+
+        # === ГИБРИДНАЯ ПРОВЕРКА DLP (Утечка данных) ===
+        if log.download_size_mb > max_download:
+            leak_ratio = round(log.download_size_mb / max_download, 1)
+            explanations["dlp_leak_detection"] = (
+                f"Потенциальная утечка данных (DLP). Объем скачивания ({log.download_size_mb} МБ) "
+                f"превышает максимальный исторический порог пользователя ({max_download} МБ) in {leak_ratio} раз."
+            )
+
+            # Начинаем с базового риска 75% и плавно добавляем по 1.5% за каждую кратность превышения лимита
+            dlp_calculated_risk = int(75 + min(25, leak_ratio * 1.5))
+            final_risk = max(final_risk, dlp_calculated_risk)
+
+        # === ГИБРИДНАЯ ПРОВЕРКА ФЛУДА (API Abuse / Request Flood) ===
+        if log.request_count_1m > max_requests:
+            request_ratio = round(log.request_count_1m / max_requests, 1)
+            explanations["profile_anomaly_detected"] = (
+                f"Критическое аномальное поведение для аккаунта '{log.user}'. "
+                f"Количество запросов ({log.request_count_1m}) превысило его норму ({max_requests}) в {request_ratio} раз."
+            )
+
+            # Начинаем со стартового риска 70% и плавно накидываем по 1% за рост кратности flood
+            flood_calculated_risk = int(70 + min(30, request_ratio * 1.0))
+            final_risk = max(final_risk, flood_calculated_risk)
 
     if final_risk >= 50:
+        # Фоновая задача на сохранение в БД, чтобы не тормозить ответ API
         background_tasks.add_task(
-            save_to_security_alerts,
-            log,
-            final_risk,  # type: ignore
-            explanations,  # type: ignore
+            save_to_security_alerts, log, final_risk, explanations
+        )
+        print(
+            f"[SIEM ALERT] Подозрительная активность сохранена в БД. Риск: {final_risk}%"
         )
 
-    # --- АВТОМАТИЧЕСКИЙ РЕАКТИВНЫЙ БАН (REDIS) ---
     if final_risk >= 80:
-        # Динамически вытаскиваем причину для Redis, приоритет отдаем DLP или Брутфорсу
+        if "blacklist" in explanations:
+            reason_text = "Blacklist: Запрос с заблокированного IP"
         if "dlp_leak_detection" in explanations:
             reason_text = "DLP: Попытка несанкционированной утечки данных"
-        elif "brute_force_detection" in explanations:
-            reason_text = "Brute-Force: Превышено число попыток входа"
+        elif "profile_anomaly_detected" in explanations:
+            reason_text = (
+                f"Anomaly: Критическое превышение лимитов активности профиля {log.user}"
+            )
         else:
             reason_text = "Критический уровень риска (API Abuse/Аномалии)"
 
@@ -168,15 +233,21 @@ async def process_fake_log(log: LogInput, background_tasks: BackgroundTasks):
 
 @app.post("/api/v1/retrain")
 async def retrain_model():
-    global ai_detector, cached_security_rules, cached_banned_ips, blacklist_reasons
+    global \
+        ai_detector, \
+        cached_security_rules, \
+        cached_banned_ips, \
+        blacklist_reasons, \
+        cached_user_profiles
 
     ai_detector = train_ai_model_from_db()
     cached_security_rules = load_security_rules_from_db()
     cached_banned_ips, blacklist_reasons = load_blacklist_from_db()
+    cached_user_profiles = load_user_profiles_from_db()
 
     return {
         "status": "success",
-        "message": "Модель ИИ успешно переобучена, кэш правил и блеклиста синхронизирован!",
+        "message": "Модель ИИ успешно переобучена, кэш правил, профилей и блеклиста синхронизирован!",
     }
 
 
@@ -185,13 +256,5 @@ if __name__ == "__main__":
 
     env_port = os.getenv("API_PORT")
     if not env_port:
-        raise RuntimeError("\n[ERROR] variable 'PORT' not set in .env!\n")
-
-    try:
-        port = int(env_port)
-    except ValueError:
-        raise ValueError(
-            f"\n[ERROR] no correct PORT='{env_port}'. Please set an integer.\n"
-        )
-
-    uvicorn.run("src.main:app", host="0.0.0.0", port=port, reload=True)
+        raise RuntimeError("\n[ERROR] variable 'API_PORT' not set in .env")
+    uvicorn.run("src.main:app", host="0.0.0.0", port=int(env_port))

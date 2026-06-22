@@ -7,3 +7,8 @@ export type blackList = {
   created_at: string;
   action: () => void;
 };
+
+export type ToggleActivePayload = {
+  id: number;
+  isActive: boolean;
+};

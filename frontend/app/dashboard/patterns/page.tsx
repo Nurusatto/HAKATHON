@@ -1,7 +1,9 @@
+import { List } from "./list";
+
 export default function PatternsPage() {
   return (
-    <div className="">
-      <h1>Паттерны пользователей</h1>
-    </div>
+    <section className="flex gap-3.5 flex-col">
+      <List />
+    </section>
   );
 }

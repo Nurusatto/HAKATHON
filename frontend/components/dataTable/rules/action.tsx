@@ -1,22 +1,16 @@
-"use client";
-
-import {
-  useDelete,
-  useToggleActive,
-} from "@/components/dataTable/blackList/api";
 import { Button } from "@/components/ui/button";
-import type { blackList } from "./type";
+import { Rules } from "./type";
+import { useToggleActive } from "./api";
 
 type Props = {
-  data: blackList;
+  data: Rules;
 };
 
 export const Actions = ({ data }: Props) => {
-  const deleteMutation = useDelete();
   const toggle = useToggleActive();
   console.log(data);
   return (
-    <div className="flex gap-3">
+    <div className="">
       <Button
         onClick={() =>
           toggle.mutate({ id: data.id, isActive: !data.is_active })
@@ -24,7 +18,6 @@ export const Actions = ({ data }: Props) => {
       >
         {data.is_active ? "off" : "on"}
       </Button>
-      <Button onClick={() => deleteMutation.mutate(data.id)}>Delete</Button>
     </div>
   );
 };

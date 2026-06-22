@@ -1,8 +1,9 @@
 from ..schemas import LogInput
 from .supabase import supabase
+from typing import Any
 
 
-def save_to_security_alerts(log: LogInput, risk: int, explanation: str):
+def save_to_security_alerts(log: LogInput, risk: int, explanation: dict[str, Any]):
     """Таблица 3: Только инциденты и аналитика"""
     try:
         data = {
@@ -10,6 +11,7 @@ def save_to_security_alerts(log: LogInput, risk: int, explanation: str):
             "event_type": log.event,
             "risk_score": risk,
             "explanation": explanation,
+            "ip_address": log.ip,
         }
         supabase.table("security_alerts").insert(data).execute()
         print(

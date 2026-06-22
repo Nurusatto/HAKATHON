@@ -5,20 +5,29 @@ import { createClient } from "@/lib/supabase/client";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"; // Убедись, что путь правильный
+import { ShieldAlert } from "lucide-react";
+import { renderExplanation } from "./utils";
+
+// Исправили типы под реальную структуру таблицы security_alerts
 type LogRow = {
   id: number;
   created_at: string;
   username: string;
   event_type: string;
-  source_ip: string;
-  download_size_mb: number;
-  request_count_1m: number;
+  ip_address: string; // Изменили с source_ip
+  risk_score: number;
+  explanation: object;
 };
 
-const PAGE_SIZE = 40;
-
-export default function LogList() {
+export const List = () => {
   "use no memo";
+  const PAGE_SIZE = 40;
   const supabase = createClient();
   const queryClient = useQueryClient();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -34,13 +43,13 @@ export default function LogList() {
     isLoading,
     isError,
   } = useInfiniteQuery<LogRow[], Error>({
-    queryKey: ["rawLogs"],
+    queryKey: ["securityAlert"],
     queryFn: async ({ pageParam = 0 }) => {
       const from = (pageParam as number) * PAGE_SIZE;
       const to = from + PAGE_SIZE - 1;
 
       const { data, error } = await supabase
-        .from("raw_logs")
+        .from("security_alerts")
         .select("*")
         .order("created_at", { ascending: false })
         .range(from, to);
@@ -89,20 +98,21 @@ export default function LogList() {
   // Магия паузы стрима внутри Realtime подписки
   useEffect(() => {
     const channel = supabase
-      .channel("realtime-raw-logs")
+      .channel("realtime-secruity-alert")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "raw_logs" },
+        { event: "INSERT", schema: "public", table: "security_alerts" },
         (payload) => {
           // ЕСЛИ СТРИМ НА ПАУЗЕ — ПРОСТО ИГНОРИРУЕМ НОВЫЕ ПОСТУПЛЕНИЯ В ИНТЕРФЕЙСЕ
           if (!isLive) return;
 
           const newLog = payload.new as LogRow;
 
+          // Исправили ключ кэша на ["securityAlert"]
           queryClient.setQueryData<{
             pages: LogRow[][];
             pageParams: unknown[];
-          }>(["rawLogs"], (oldData) => {
+          }>(["securityAlert"], (oldData) => {
             if (!oldData) return oldData;
             const updatedPages = [...oldData.pages];
             if (updatedPages.length > 0) {
@@ -123,7 +133,7 @@ export default function LogList() {
 
   useEffect(() => {
     if (isLive) {
-      queryClient.invalidateQueries({ queryKey: ["rawLogs"] });
+      queryClient.invalidateQueries({ queryKey: ["securityAlert"] });
     }
   }, [isLive, queryClient]);
 
@@ -154,7 +164,6 @@ export default function LogList() {
             Real-time Event
           </h2>
 
-          {/* Добавили shrink-0, чтобы точка никогда не деформировалась */}
           <span className="flex h-2 w-2 relative shrink-0">
             {isLive && (
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40 opacity-75"></span>
@@ -230,12 +239,16 @@ export default function LogList() {
                   </div>
                 ) : (
                   <div className="flex w-full justify-between items-center gap-4">
-                    <span className="text-muted-foreground whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleTimeString()}
+                    {/* Первая колонка: Выводит время создания алерта */}
+                    <span className="text-muted-foreground whitespace-nowrap min-w-20">
+                      {log.created_at
+                        ? new Date(log.created_at).toLocaleTimeString()
+                        : "—"}
                     </span>
 
+                    {/* Вторая колонка: Выводит IP-адрес из корректного поля ip_address */}
                     <span className="text-primary font-semibold tracking-mono whitespace-nowrap min-w-27.5">
-                      {log.source_ip}
+                      {log.ip_address || "0.0.0.0"}
                     </span>
 
                     <span className="text-foreground font-medium min-w-22.5 truncate">
@@ -246,25 +259,43 @@ export default function LogList() {
                       {log.event_type}
                     </span>
 
+                    <>
+                      <div className="text-right whitespace-nowrap min-w-8 flex justify-end items-center">
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <button className="text-muted-foreground hover:text-amber-500 transition-colors p-1 rounded-md hover:bg-muted/50 cursor-help">
+                                <ShieldAlert className="h-4 w-4" />
+                              </button>
+                            </TooltipTrigger>
+                            <TooltipContent
+                              side="left"
+                              className="shadow-xl max-w-sm rounded-lg border p-1!"
+                            >
+                              {renderExplanation(log.explanation)}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </>
+
                     <div className="text-right whitespace-nowrap min-w-20">
-                      {log.download_size_mb >= 1000 ? (
+                      {log.risk_score >= 80 ? (
                         <span className="inline-flex items-center rounded-md bg-destructive/10 px-2 py-0.5 text-[11px] font-bold text-destructive animate-pulse">
-                          {(log.download_size_mb / 1000).toFixed(1)} GB
+                          Risk: {log.risk_score}
                         </span>
-                      ) : log.download_size_mb >= 100 ? (
-                        <span className="inline-flex items-center rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-500 dark:text-amber-400">
-                          {log.download_size_mb} MB
-                        </span>
+                      ) : log.risk_score >= 70 ? (
+                        <>
+                          <span className="inline-flex items-center rounded-md bg-amber-500/10 px-2 py-0.5 text-[11px] font-semibold text-amber-500 dark:text-amber-400">
+                            Risk: {log.risk_score}
+                          </span>
+                        </>
                       ) : (
                         <span className="text-muted-foreground text-xs font-medium">
-                          {log.download_size_mb.toFixed(0)} MB
+                          Risk: {log.risk_score}
                         </span>
                       )}
                     </div>
-
-                    <span className="text-muted-foreground text-right whitespace-nowrap">
-                      {log.request_count_1m} req/m
-                    </span>
                   </div>
                 )}
               </div>
@@ -274,4 +305,4 @@ export default function LogList() {
       </div>
     </div>
   );
-}
+};
