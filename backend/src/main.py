@@ -51,7 +51,10 @@ async def lifespan(app: FastAPI):
         cached_user_profiles, \
         redis_client
 
-    redis_client = aioredis.from_url("redis://redis:6379", decode_responses=True)
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+        raise RuntimeError("[ERROR] variable 'REDIS_URL' not set in .env")
+    redis_client = aioredis.from_url(redis_url, decode_responses=True)
 
     ai_detector = train_ai_model_from_db()
     cached_security_rules = load_security_rules_from_db()
@@ -212,16 +215,16 @@ async def process_log(log: LogInput, background_tasks: BackgroundTasks):
         )
 
     if final_risk >= 80:
+        reason_text = "Критический уровень риска (API Abuse/Аномалии)"
+
         if "blacklist" in explanations:
             reason_text = "Blacklist: Запрос с заблокированного IP"
-        if "dlp_leak_detection" in explanations:
+        elif "dlp_leak_detection" in explanations:
             reason_text = "DLP: Попытка несанкционированной утечки данных"
         elif "profile_anomaly_detected" in explanations:
             reason_text = (
                 f"Anomaly: Критическое превышение лимитов активности профиля {log.user}"
             )
-        else:
-            reason_text = "Критический уровень риска (API Abuse/Аномалии)"
 
         await redis_client.set(f"ban:{log.ip}", reason_text, ex=60)
         print(
