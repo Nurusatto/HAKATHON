@@ -1,6 +1,7 @@
+from typing import Any
+
 from ..schemas import LogInput
 from .supabase import supabase
-from typing import Any
 
 
 def save_to_security_alerts(log: LogInput, risk: int, explanation: dict[str, Any]):

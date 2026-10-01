@@ -1,21 +1,21 @@
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+
+import numpy as np
+import redis.asyncio as aioredis
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-import numpy as np
-
-
 from src.lib import (
     load_blacklist_from_db,
     load_security_rules_from_db,
     save_to_raw_logs,
     save_to_security_alerts,
 )
-from src.schemas import LogInput
-from .ML import train_ai_model_from_db
-import redis.asyncio as aioredis
 from src.lib.supabase import supabase  # Клиент supabase
+from src.schemas import LogInput
+
+from .ai import train_ai_model_from_db
 
 load_dotenv()
 

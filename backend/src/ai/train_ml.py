@@ -1,5 +1,6 @@
 import logging
 from typing import Any, cast
+
 import numpy as np
 from sklearn.ensemble import IsolationForest
 from src.lib.supabase import supabase

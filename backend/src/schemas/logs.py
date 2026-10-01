@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, NonNegativeInt, NonNegativeFloat
+from pydantic import BaseModel, Field, NonNegativeFloat, NonNegativeInt
 
 
 class LogInput(BaseModel):
