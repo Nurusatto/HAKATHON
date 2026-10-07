@@ -1,8 +1,10 @@
+import os
 import random
-import requests
 import time
 
-URL = "http://localhost:8000/protect-log"
+import requests
+
+URL = os.getenv("GENERATOR_URL", "http://localhost:8000/protect-log")
 TOTAL_LOGS = 150
 
 # 1. Расширенный список пользователей (для более интересной статистики)
@@ -167,7 +169,7 @@ for i in range(1, TOTAL_LOGS + 1):
         else:
             print(f"Ошибка Бэкенда: Статус {response.status_code} | {response.text}")
 
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         print(f"Не удалось отправить запрос: {e}")
 
     print("-" * 50)

@@ -1,3 +1,6 @@
+from httpx import HTTPError
+from postgrest.exceptions import APIError
+
 from ..schemas import LogInput
 from .supabase import supabase
 
@@ -13,5 +16,5 @@ def save_to_raw_logs(log: LogInput):
             "download_size_mb": log.download_size_mb,
         }
         supabase.table("raw_logs").insert(data).execute()
-    except Exception as e:
+    except (APIError, HTTPError) as e:
         print(f"[DB Error] Ошибка записи в raw_logs: {e}")

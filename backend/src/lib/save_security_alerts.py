@@ -1,5 +1,8 @@
 from typing import Any
 
+from httpx import HTTPError
+from postgrest.exceptions import APIError
+
 from ..schemas import LogInput
 from .supabase import supabase
 
@@ -18,5 +21,5 @@ def save_to_security_alerts(log: LogInput, risk: int, explanation: dict[str, Any
         print(
             f"[Alert System] ИНЦИДЕНТ ЗАФИКСИРОВАН! Пользователь: {log.user}, Риск: {risk}%"
         )
-    except Exception as e:
+    except (APIError, HTTPError) as e:
         print(f"[DB Error] Ошибка записи в security_alerts: {e}")

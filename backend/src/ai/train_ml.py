@@ -2,6 +2,8 @@ import logging
 from typing import Any, cast
 
 import numpy as np
+from httpx import HTTPError
+from postgrest.exceptions import APIError
 from sklearn.ensemble import IsolationForest
 from src.lib.supabase import supabase
 
@@ -72,9 +74,9 @@ def train_ai_model_from_db() -> IsolationForest:
         )
         return model
 
-    except Exception as e:
-        logger.error(
-            f"[AI Engine Critical Error] Error training model from database: {e}"
+    except (APIError, HTTPError, ValueError):
+        logger.exception(
+            "[AI Engine Critical Error] Error training model from database"
         )
         logger.info("[AI Engine] Deploying emergency local 4D model...")
 

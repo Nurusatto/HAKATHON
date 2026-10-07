@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { RealtimePostgresUpdatePayload } from "@supabase/supabase-js";
 import LogList from "./logList/logList";
+import { GeneratorButton } from "./generator-button";
 
 type DatabaseStatsRow = {
   id: string;
@@ -84,6 +85,7 @@ export default function LogsPage() {
 
   return (
     <section className="flex gap-3.5 flex-col">
+      <GeneratorButton />
       <CardPanel
         data={stats || []}
         isLoading={isLoading}

@@ -1,11 +1,17 @@
+import asyncio
+import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import numpy as np
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from httpx import HTTPError
+from postgrest.exceptions import APIError
 from src.lib import (
     load_blacklist_from_db,
     load_security_rules_from_db,
@@ -36,7 +42,7 @@ def load_user_profiles_from_db():
             f"[Cache System] Успешно загружено профилей пользователей: {len(profiles)}"
         )
         return profiles
-    except Exception as e:
+    except (APIError, HTTPError) as e:
         print(f"[DB Error] Ошибка загрузки профилей пользователей: {e}")
         return {}
 
@@ -53,7 +59,8 @@ async def lifespan(app: FastAPI):
 
     redis_url = os.getenv("REDIS_URL")
     if not redis_url:
-        raise RuntimeError("[ERROR] variable 'REDIS_URL' not set in .env")
+        message = "[ERROR] variable 'REDIS_URL' not set in .env"
+        raise RuntimeError(message)
     redis_client = aioredis.from_url(redis_url, decode_responses=True)
 
     ai_detector = train_ai_model_from_db()
@@ -72,15 +79,59 @@ def hello():
     return {"message": "AI SHIELD"}
 
 
+GENERATOR_LOCK = "generator:running"
+
+
+async def finish_generator(process: asyncio.subprocess.Process):
+    try:
+        await asyncio.wait_for(process.wait(), timeout=850)
+        if process.returncode:
+            logging.getLogger("uvicorn.error").error(
+                "Generator exited with code %s", process.returncode
+            )
+    except TimeoutError:
+        process.kill()
+        await process.wait()
+        logging.getLogger("uvicorn.error").error("Generator timed out")
+    finally:
+        await redis_client.delete(GENERATOR_LOCK)
+
+
+@app.get("/api/v1/generator")
+async def generator_status():
+    return {"running": bool(await redis_client.exists(GENERATOR_LOCK))}
+
+
+@app.post("/api/v1/generator", status_code=202)
+async def start_generator(background_tasks: BackgroundTasks):
+    if not await redis_client.set(GENERATOR_LOCK, "1", nx=True, ex=900):
+        raise HTTPException(status_code=409, detail="Генератор уже запущен")
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env["GENERATOR_URL"] = (
+        f"http://127.0.0.1:{os.getenv('API_PORT', '8000')}/protect-log"
+    )
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-u",
+            str(backend_dir / "generator.py"),
+            cwd=backend_dir,
+            env=env,
+        )
+    except OSError as error:
+        await redis_client.delete(GENERATOR_LOCK)
+        raise HTTPException(
+            status_code=500, detail="Не удалось запустить генератор"
+        ) from error
+
+    background_tasks.add_task(finish_generator, process)
+    return {"status": "started", "message": "Генератор запущен: 150 событий"}
+
+
 @app.post("/protect-log")
 async def process_log(log: LogInput, background_tasks: BackgroundTasks):
-    global \
-        ai_detector, \
-        cached_security_rules, \
-        cached_banned_ips, \
-        blacklist_reasons, \
-        cached_user_profiles
-
     is_banned = await redis_client.get(f"ban:{log.ip}")
     if is_banned:
         raise HTTPException(
@@ -114,7 +165,7 @@ async def process_log(log: LogInput, background_tasks: BackgroundTasks):
             anomaly_score = ai_detector.score_samples(features)[0]
             if anomaly_score < -0.4:
                 ai_score = int((abs(anomaly_score) - 0.4) * 250)
-        except Exception as e:
+        except ValueError as e:
             print(f"[AI Predict Error] Ошибка инференса модели: {e}")
 
     base_risk = max(0, min(100, ai_score))
@@ -149,9 +200,7 @@ async def process_log(log: LogInput, background_tasks: BackgroundTasks):
                     f"[База Правил]: {rule.get('description', '')}"
                 )
                 raw_severity = rule.get("severity_score")
-                if isinstance(raw_severity, (int, float)) or isinstance(
-                    raw_severity, str
-                ):
+                if isinstance(raw_severity, (int, float, str)):
                     severity = int(raw_severity)
                 else:
                     severity = 0
@@ -259,5 +308,6 @@ if __name__ == "__main__":
 
     env_port = os.getenv("API_PORT")
     if not env_port:
-        raise RuntimeError("\n[ERROR] variable 'API_PORT' not set in .env")
+        message = "\n[ERROR] variable 'API_PORT' not set in .env"
+        raise RuntimeError(message)
     uvicorn.run("src.main:app", host="0.0.0.0", port=int(env_port))

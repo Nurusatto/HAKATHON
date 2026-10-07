@@ -1,3 +1,6 @@
+from httpx import HTTPError
+from postgrest.exceptions import APIError
+
 from .supabase import supabase
 
 
@@ -18,7 +21,7 @@ def load_security_rules_from_db():
         print(f"[System] Кэш успешно обновлен. Загружено правил: {len(rules_dict)}")
         print(rules_dict)
         return rules_dict
-    except Exception as e:
+    except (APIError, HTTPError) as e:
         print(f"[System Critical Error] Не удалось загрузить правила из БД: {e}")
 
         return {}

@@ -11,7 +11,6 @@ def update_and_get_window_stats(ip_address: str, current_size_mb: float):
     now = time.time()
     window = sliding_windows[ip_address]
 
-
     if now - window["last_reset"] > 60:
         window["count"] = 1
         window["size"] = current_size_mb

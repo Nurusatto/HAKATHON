@@ -30,6 +30,7 @@ services:
       - .env
     environment:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+      - BACKEND_API_URL=http://backend:8000
       # СЛЕДУЮЩАЯ СТРОКА ВКЛЮЧАЕТ WATCH-РЕЖИМ ДЛЯ WATCHPACK/TURBOPACK В DOCKER:
       - WATCHPACK_POLLING=true
     depends_on:

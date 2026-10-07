@@ -1,3 +1,6 @@
+from httpx import HTTPError
+from postgrest.exceptions import APIError
+
 from .supabase import supabase
 
 
@@ -17,6 +20,6 @@ def load_blacklist_from_db():
             f"[System] Кэш блеклиста успешно обновлен. Загружено IP: {len(banned_ips)}"
         )
         return banned_ips, reasons
-    except Exception as e:
+    except (APIError, HTTPError) as e:
         print(f"[System Critical Error] Не удалось загрузить Blacklist из БД: {e}")
         return set(), {}
