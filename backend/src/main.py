@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
         cached_user_profiles, \
         redis_client
 
-    redis_url = os.getenv("REDIS_URL")
+    redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     if not redis_url:
         message = "[ERROR] variable 'REDIS_URL' not set in .env"
         raise RuntimeError(message)
