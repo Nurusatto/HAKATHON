@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from httpx import HTTPError
 from postgrest.exceptions import APIError
+from redis.exceptions import RedisError
 from src.lib import (
     load_blacklist_from_db,
     load_security_rules_from_db,
@@ -97,20 +98,39 @@ async def finish_generator(process: asyncio.subprocess.Process):
         await redis_client.delete(GENERATOR_LOCK)
 
 
-@app.get("/api/v1/generator")
+@app.get("/api/v1/generator/status")
 async def generator_status():
-    return {"running": bool(await redis_client.exists(GENERATOR_LOCK))}
+    try:
+        return {"running": bool(await redis_client.exists(GENERATOR_LOCK))}
+    except RedisError as error:
+        logging.getLogger("uvicorn.error").exception(
+            "Generator status: Redis unavailable"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Redis недоступен. Проверьте REDIS_URL на бэкенде и доступность Redis.",
+        ) from error
 
 
 @app.post("/api/v1/generator", status_code=202)
 async def start_generator(background_tasks: BackgroundTasks):
-    if not await redis_client.set(GENERATOR_LOCK, "1", nx=True, ex=900):
+    try:
+        acquired = await redis_client.set(GENERATOR_LOCK, "1", nx=True, ex=900)
+    except RedisError as error:
+        logging.getLogger("uvicorn.error").exception(
+            "Generator start: Redis unavailable"
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Redis недоступен. Проверьте REDIS_URL на бэкенде и доступность Redis.",
+        ) from error
+    if not acquired:
         raise HTTPException(status_code=409, detail="Генератор уже запущен")
 
     backend_dir = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env["GENERATOR_URL"] = (
-        f"http://127.0.0.1:{os.getenv('API_PORT', '8000')}/protect-log"
+        f"http://127.0.0.1:{os.getenv('PORT') or os.getenv('API_PORT', '8000')}/protect-log"
     )
     try:
         process = await asyncio.create_subprocess_exec(
@@ -306,7 +326,7 @@ async def retrain_model():
 if __name__ == "__main__":
     import uvicorn
 
-    env_port = os.getenv("API_PORT")
+    env_port = os.getenv("PORT") or os.getenv("API_PORT")
     if not env_port:
         message = "\n[ERROR] variable 'API_PORT' not set in .env"
         raise RuntimeError(message)

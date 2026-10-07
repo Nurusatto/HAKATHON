@@ -19,7 +19,8 @@ export function GeneratorButton() {
   const status = useQuery<{ running: boolean }>({
     queryKey: ["generatorStatus"],
     queryFn: () => callGenerator("GET"),
-    refetchInterval: 3000,
+    retry: false,
+    refetchInterval: (query) => query.state.data?.running ? 3000 : false,
   });
   const start = useMutation({
     mutationFn: () => callGenerator("POST"),
@@ -42,7 +43,7 @@ export function GeneratorButton() {
       </Button>
       {status.isError && (
         <p role="status" className="text-sm text-destructive">
-          Не удалось получить статус генератора
+          {status.error.message}
         </p>
       )}
     </div>

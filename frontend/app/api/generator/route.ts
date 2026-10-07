@@ -6,12 +6,20 @@ async function proxyGenerator(method: "GET" | "POST") {
   ).replace(/\/$/, "");
 
   try {
-    const response = await fetch(`${baseUrl}/api/v1/generator`, {
+    const path = method === "GET" ? "/api/v1/generator/status" : "/api/v1/generator";
+    const response = await fetch(`${baseUrl}${path}`, {
       method,
       cache: "no-store",
       signal: AbortSignal.timeout(10000),
     });
-    return new Response(await response.text(), {
+    const body = await response.text();
+    if (!response.headers.get("content-type")?.includes("application/json")) {
+      return Response.json(
+        { detail: `Бэкенд вернул HTTP ${response.status}. Подробности в логах FastAPI.` },
+        { status: response.ok ? 502 : response.status },
+      );
+    }
+    return new Response(body, {
       status: response.status,
       headers: { "Content-Type": "application/json" },
     });
